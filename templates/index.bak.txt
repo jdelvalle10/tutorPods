@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doral Academy AI Tutor</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f9; display: flex; justify-content: center; padding: 20px; }
+        #chat-container { width: 100%; max-width: 600px; background: white; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); padding: 20px; }
+        #chat-box { height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 5px; background: #fafafa; }
+        .message { margin: 10px 0; padding: 10px; border-radius: 5px; line-height: 1.5; }
+        .user-msg { background-color: #007bff; color: white; text-align: right; margin-left: 20px; }
+        .ai-msg { background-color: #e9ecef; color: black; margin-right: 20px; }
+        .error-msg { background-color: #ffcccc; color: #900; font-weight: bold; }
+        #input-container { display: flex; gap: 10px; }
+        input[type="text"] { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+        button { padding: 10px 20px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background-color: #218838; }
+    </style>
+</head>
+<body>
+
+<div id="chat-container">
+    <h2 style="text-align: center; color: #333;">Doral Academy AI Tutor</h2>
+    <div id="chat-box"></div>
+    <div id="input-container">
+        <input type="text" id="user-input" placeholder="Ask a question..." onkeypress="handleKeyPress(event)">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+</div>
+
+<script>
+    // This array stores the conversational memory
+    let conversationHistory = [];
+
+    async function sendMessage() {
+        const inputField = document.getElementById("user-input");
+        const chatBox = document.getElementById("chat-box");
+        const message = inputField.value.trim();
+        if (!message) return;
+
+        // Display user message in UI
+        chatBox.innerHTML += `<div class="message user-msg">${message}</div>`;
+        inputField.value = "";
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        // Add the new user message to the history array
+        conversationHistory.push({ "role": "user", "content": message });
+
+        try {
+            // Send the entire conversation history to the Python server
+            const response = await fetch("/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ messages: conversationHistory })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                // Display AI response and save it to the history array
+                chatBox.innerHTML += `<div class="message ai-msg">${data.response}</div>`;
+                conversationHistory.push({ "role": "assistant", "content": data.response });
+            } else {
+                // If blocked by guardrails, display error but remove the bad prompt from history
+                chatBox.innerHTML += `<div class="message error-msg">Alert: ${data.response}</div>`;
+                conversationHistory.pop(); 
+            }
+        } catch (error) {
+            chatBox.innerHTML += `<div class="message error-msg">Error connecting to the AI Tutor.</div>`;
+            conversationHistory.pop();
+        }
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function handleKeyPress(event) {
+        if (event.key === "Enter") sendMessage();
+    }
+</script>
+
+</body>
+</html>
