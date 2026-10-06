@@ -2,10 +2,22 @@ import threading
 import ctypes
 import datetime
 import json
+import os
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 
 app = Flask(__name__)
+
+# Tunables (override with environment variables)
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/chat")
+MODEL = os.environ.get("TUTOR_MODEL", "deepseek-r1:8b")
+MAX_HISTORY = int(os.environ.get("TUTOR_MAX_HISTORY", "10"))   # messages sent to the model
+KEEP_ALIVE = os.environ.get("TUTOR_KEEP_ALIVE", "24h")         # keep the model loaded between questions
+# (connect timeout, max wait between streamed chunks) in seconds
+OLLAMA_TIMEOUT = (5, float(os.environ.get("TUTOR_READ_TIMEOUT", "300")))
+
+# Reuse one connection pool instead of reconnecting for every request
+ollama_session = requests.Session()
 
 # Basic K-12 Guardrail Keywords
 FORBIDDEN_WORDS = [
@@ -77,18 +89,20 @@ def chat():
         return jsonify({"response": "I am a school AI tutor. Please keep your questions appropriate for a classroom environment."}), 403
 
     # Combine the Socratic System Prompt with the entire conversation history
-    full_payload_messages = [SYSTEM_PROMPT] + conversation_history
+    # Only the most recent turns are sent so long sessions don't slow the model down
+    full_payload_messages = [SYSTEM_PROMPT] + conversation_history[-MAX_HISTORY:]
 
     # Forward the context-aware payload to Local DeepSeek-R1-8B via Ollama
     payload = {
-        "model": "deepseek-r1:8b",
+        "model": MODEL,
         "messages": full_payload_messages,
-        "stream": True
+        "stream": True,
+        "keep_alive": KEEP_ALIVE
     }
 
     try:
         # Open the connection before responding so a failure still returns a 500
-        ollama_response = requests.post("http://localhost:11434/api/chat", json=payload, stream=True)
+        ollama_response = ollama_session.post(OLLAMA_URL, json=payload, stream=True, timeout=OLLAMA_TIMEOUT)
         ollama_response.raise_for_status()
     except Exception as e:
         return jsonify({"error": "Failed to connect to the AI model."}), 500
