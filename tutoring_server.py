@@ -1,8 +1,9 @@
 import threading
 import ctypes
 import datetime
+import json
 import requests
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 
 app = Flask(__name__)
 
@@ -82,16 +83,33 @@ def chat():
     payload = {
         "model": "deepseek-r1:8b",
         "messages": full_payload_messages,
-        "stream": False
+        "stream": True
     }
 
     try:
-        ollama_response = requests.post("http://localhost:11434/api/chat", json=payload)
+        # Open the connection before responding so a failure still returns a 500
+        ollama_response = requests.post("http://localhost:11434/api/chat", json=payload, stream=True)
         ollama_response.raise_for_status()
-        reply = ollama_response.json().get("message", {}).get("content", "")
-        return jsonify({"response": reply})
     except Exception as e:
         return jsonify({"error": "Failed to connect to the AI model."}), 500
+
+    def generate():
+        # Ollama streams one JSON object per line; forward just the text pieces
+        try:
+            for line in ollama_response.iter_lines():
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                content = chunk.get("message", {}).get("content", "")
+                if content:
+                    yield content
+                if chunk.get("done"):
+                    break
+        finally:
+            ollama_response.close()
+
+    return Response(stream_with_context(generate()), mimetype="text/plain",
+                    headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

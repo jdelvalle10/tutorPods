@@ -175,27 +175,63 @@
                 body: JSON.stringify({ messages: conversationHistory })
             });
 
-            const data = await response.json();
-
-            // Hide spinner
-            spinnerContainer.style.display = "none";
-
-            if (response.ok) {
-                const formattedResponse = marked.parse(data.response);
-                
-                chatBox.innerHTML += `<div class="message ai-msg">${formattedResponse}</div>`;
-                
-                if (window.MathJax) {
-                    MathJax.typesetPromise([chatBox]).catch(function (err) {
-                        console.error('MathJax error: ', err.message);
-                    });
-                }
-
-                conversationHistory.push({ "role": "assistant", "content": data.response });
-            } else {
-                chatBox.innerHTML += `<div class="message error-msg">Alert: ${data.response}</div>`;
-                conversationHistory.pop(); 
+            if (!response.ok) {
+                const data = await response.json();
+                spinnerContainer.style.display = "none";
+                chatBox.innerHTML += `<div class="message error-msg">Alert: ${data.response || data.error}</div>`;
+                conversationHistory.pop();
+                chatBox.scrollTop = chatBox.scrollHeight;
+                return;
             }
+
+            // Stream the reply into a new message bubble as it arrives
+            const aiDiv = document.createElement("div");
+            aiDiv.className = "message ai-msg";
+            chatBox.appendChild(aiDiv);
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let fullText = "";
+            let firstChunk = true;
+            let pending = false;
+
+            // Hide <think> blocks (finished or still open) from what the student sees
+            const visible = (t) => t.replace(/<think>[\s\S]*?(<\/think>|$)/g, "").trimStart();
+
+            // Re-render at most once per animation frame
+            const render = () => {
+                pending = false;
+                aiDiv.innerHTML = marked.parse(visible(fullText));
+                chatBox.scrollTop = chatBox.scrollHeight;
+            };
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                fullText += decoder.decode(value, { stream: true });
+
+                if (firstChunk) {
+                    spinnerContainer.style.display = "none";
+                    firstChunk = false;
+                }
+                if (!pending) {
+                    pending = true;
+                    requestAnimationFrame(render);
+                }
+            }
+            fullText += decoder.decode();
+
+            spinnerContainer.style.display = "none";
+            const finalText = visible(fullText);
+            aiDiv.innerHTML = marked.parse(finalText);
+
+            if (window.MathJax) {
+                MathJax.typesetPromise([aiDiv]).catch(function (err) {
+                    console.error('MathJax error: ', err.message);
+                });
+            }
+
+            conversationHistory.push({ "role": "assistant", "content": finalText });
         } catch (error) {
             // Hide spinner and show error message
             spinnerContainer.style.display = "none";
